@@ -9,6 +9,10 @@
 template <class OutputType, class... InputTypes>
 class TaskBlock
 {
+private:
+    template <class OtherOutputType, class... OtherInputTypes>
+    friend class TaskBlock;
+
 	using transform_fn_type = std::function<OutputType(InputTypes...)>;
 	using internal_fn_type = std::function<void(InputTypes...)>;
 
@@ -33,12 +37,14 @@ class TaskBlock
     std::atomic_size_t num_queued_ = 0;
     std::atomic_size_t num_queued_or_running_ = 0;
 
-    bool completion_signaled_ = false;
+    std::atomic_size_t required_signal_num_ = 1;
+    std::atomic_size_t completion_signaled_num_ = 0;
+    std::atomic_size_t num_parents_ = 0;
 
     bool decrement_and_check_completion()
     {
-        size_t queued_or_running = --num_queued_or_running_;
-        bool isComplete = completion_signaled_ && queued_or_running == 0;
+        --num_queued_or_running_;
+        bool isComplete = is_complete();
 
         if (isComplete)
             complete_fn_();
@@ -99,13 +105,18 @@ class TaskBlock
             nextBlock->complete();
             this->signal_completion();
         })
-    {}
+    {
+        ++nextBlock->required_signal_num_;
+        size_t numParents = nextBlock->num_parents_++;
+        if(numParents == 0)
+            --nextBlock->required_signal_num_;
+    }
 
 
 public:
     bool is_complete() const
     {
-        return completion_signaled_ && num_queued_or_running_ == 0;
+        return completion_signaled_num_ == required_signal_num_ && num_queued_or_running_ == 0;
     }
 
     bool has_more_data() const
@@ -145,8 +156,8 @@ public:
 
 	void post(InputTypes&&... data)
 	{
-        if (completion_signaled_)
-            throw std::exception("Cannot post data to completed TaskBlock");
+        if (completion_signaled_num_ == required_signal_num_)
+            throw std::exception();
 
         ++num_queued_or_running_;
 
@@ -164,8 +175,8 @@ public:
 
     void post(const InputTypes&... data)
     {
-        if (completion_signaled_)
-            throw std::exception("Cannot post data to completed TaskBlock");
+        if (completion_signaled_num_ == required_signal_num_)
+            throw std::exception();
 
         ++num_queued_or_running_;
 
@@ -183,8 +194,11 @@ public:
 
     void complete()
     {
-        this->completion_signaled_ = true;
-        if (is_complete())
+        if(numParents > 0)
+            throw std::exception();
+
+        ++completion_signaled_num_;
+        if(is_complete())
             complete_fn_();
     }
 
@@ -200,13 +214,13 @@ public:
 	OutputType get()
 	{
         if (queue_ == nullptr)
-            throw std::exception("TaskBlock is not an output block");
+            throw std::exception();
 
 		std::unique_lock<std::mutex> lock(queue_mutex_);
 		queue_variable_.wait(lock, [this] { return !this->queue_->empty() || (!this->has_more_data() && this->is_complete()); });
 
         if (!this->has_more_data() && is_complete())
-            throw std::exception("Tried getting data after block was completed");
+            throw std::exception();
 
 		OutputType ret = std::move(queue_->front());
 		queue_->pop();
@@ -217,6 +231,10 @@ public:
 template <class... InputTypes>
 class TaskBlock<void, InputTypes...>
 {
+private:
+    template <class OtherOutputType, class... OtherInputTypes>
+    friend class TaskBlock;
+
     using transform_fn_type = std::function<void(InputTypes...)>;
 
     std::shared_ptr<ThreadPool> pool_;
@@ -233,12 +251,14 @@ class TaskBlock<void, InputTypes...>
     std::atomic_size_t num_queued_ = 0;
     std::atomic_size_t num_queued_or_running_ = 0;
 
-    bool completion_signaled_ = false;
+    std::atomic_size_t required_signal_num_ = 1;
+    std::atomic_size_t completion_signaled_num_ = 0;
+    std::atomic_size_t num_parents_ = 0;
 
     bool decrement_and_check_completion()
     {
-        size_t queued_or_running = --num_queued_or_running_;
-        bool isComplete = completion_signaled_ && queued_or_running == 0;
+        --num_queued_or_running_;
+        bool isComplete = is_complete();
 
         if (isComplete)
             signal_completion();
@@ -274,10 +294,9 @@ class TaskBlock<void, InputTypes...>
     {}
 
 public:
-
     bool is_complete() const
     {
-        return completion_signaled_ && num_queued_or_running_ == 0;
+        return completion_signaled_num_ == required_signal_num_ && num_queued_or_running_ == 0;
     }
 
     void set_max_queued(size_t max_queued)
@@ -295,8 +314,8 @@ public:
 
     void post(InputTypes&&... data)
     {
-        if (completion_signaled_)
-            throw std::exception("Cannot post data to completed TaskBlock");
+        if (completion_signaled_num_ == required_signal_num_)
+            throw std::exception();
 
         ++num_queued_or_running_;
 
@@ -314,8 +333,11 @@ public:
 
     void complete()
     {
-        this->completion_signaled_ = true;
-        if (is_complete())
+        if(numParents > 0)
+            throw std::exception();
+
+        ++completion_signaled_num_;
+        if(is_complete())
             signal_completion();
     }
 
