@@ -194,9 +194,6 @@ public:
 
     void complete()
     {
-        if(numParents > 0)
-            throw std::exception();
-
         ++completion_signaled_num_;
         if(is_complete())
             complete_fn_();
@@ -333,9 +330,6 @@ public:
 
     void complete()
     {
-        if(numParents > 0)
-            throw std::exception();
-
         ++completion_signaled_num_;
         if(is_complete())
             signal_completion();

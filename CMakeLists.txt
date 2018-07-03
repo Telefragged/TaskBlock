@@ -3,10 +3,10 @@ cmake_minimum_required(VERSION 3.1)
 project(TaskBlockExample)
 
 include(CheckCXXCompilerFlag)
-CHECK_CXX_COMPILER_FLAG("/std:c++17" _cpp_latest_flag_supported )
-if (_cpp_latest_flag_supported)
+CHECK_CXX_COMPILER_FLAG("/std:c++17" CXX_HAS_C++17_FLAG)
+if (CXX_HAS_C++17_FLAG)
     add_compile_options("/std:c++17")
-elseif()
+else()
     message(FATAL_ERROR "This project needs a c++17 compatible compiler, CMake will exit." )
 endif()
 
