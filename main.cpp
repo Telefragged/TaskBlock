@@ -1,4 +1,5 @@
 #include <iostream>
+#include <numeric>
 #include <stdio.h>
 #include <string>
 #include <random>
@@ -6,6 +7,7 @@
 #include <utility>
 #include <array>
 #include <limits>
+#include <cstddef>
 
 #include "TaskBlock.hpp"
 
@@ -44,19 +46,18 @@ public:
             this->operator()();
     }
 };
-
 int main(int argc, char *argv[])
 {
     auto begTime = std::chrono::high_resolution_clock::now();
 
     auto pool1 = std::make_shared<ThreadPool>(12);
 
-    auto printDouble = TaskBlock<void, double>::create([](double time)
+    auto printDouble = TaskBlock<void, double>::create([](double value)
     {
-        printf("Sorting took %.3fms\n", time);
+        printf("%.3fms\n", value);
     }, pool1);
 
-    auto vectorSorter = TaskBlock<double, std::vector<size_t>>::create(printDouble, [](auto &&vec)
+    auto vectorSorter = TaskBlock<double, std::vector<size_t>>::create([](auto &&vec)
     {
         auto begTime = std::chrono::high_resolution_clock::now();
         std::sort(vec.begin(), vec.end());
@@ -64,7 +65,7 @@ int main(int argc, char *argv[])
         return std::chrono::duration<double, std::milli>(endTime - begTime).count();
     }, pool1);
 
-    auto vectorShuffler = TaskBlock<std::vector<size_t>, std::vector<size_t>>::create(vectorSorter, [](const auto &vec)
+    auto vectorShuffler = TaskBlock<std::vector<size_t>, std::vector<size_t>>::create([](const auto &vec)
     {
         // static thread_local std::mt19937 engine(std::random_device{}());
         static thread_local XorShift1024s engine;
@@ -74,29 +75,24 @@ int main(int argc, char *argv[])
         return copy;
     }, pool1);
 
-    auto doubleMulter = TaskBlock<double, double, double>::create(printDouble, [](double n, double m){return n * m;}, pool1);
+    vectorShuffler->add_output_block(vectorSorter);
+
+    vectorSorter->add_output_block(printDouble);
 
     auto postBegTime = std::chrono::high_resolution_clock::now();
 
     std::vector<size_t> vector;
 
-    vector.resize(100'000);
+    vector.resize(10'000'000);
 
     const size_t num_items = 100;
 
-    std::shuffle_order_engine<XorShift1024s, 15> engine;
+    std::shuffle_order_engine<XorShift1024s, 16> engine;
 
     for (size_t n = 0; n < vector.size(); n++)
         vector[n] = engine();
 
     vectorShuffler->set_max_queued(1);
-
-    std::uniform_real_distribution<double> dist(0.0, 100.0);
-
-    for(size_t n = 0; n < num_items; n++)
-        doubleMulter->post(dist(engine), dist(engine));
-
-    doubleMulter->complete();
 
     for (size_t n = 0; n < num_items; n++)
     {

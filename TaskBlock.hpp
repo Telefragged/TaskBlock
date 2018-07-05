@@ -15,11 +15,14 @@ private:
 
 	using transform_fn_type = std::function<OutputType(InputTypes...)>;
 	using internal_fn_type = std::function<void(InputTypes...)>;
+    using predicate_fn_type = std::function<bool(OutputType&)>;
 
 	std::shared_ptr<ThreadPool> pool_;
 
 	transform_fn_type transform_fn_;
 	internal_fn_type fn_;
+
+    std::vector<std::tuple<predicate_fn_type, std::function<void()>>> child_blocks_;
 
     std::function<void()> complete_fn_;
 
@@ -40,6 +43,7 @@ private:
     std::atomic_size_t required_signal_num_ = 1;
     std::atomic_size_t completion_signaled_num_ = 0;
     std::atomic_size_t num_parents_ = 0;
+    std::atomic_size_t num_children_ = 0;
 
     bool decrement_and_check_completion()
     {
@@ -84,32 +88,6 @@ private:
         }),
         complete_fn_([this] { this->signal_completion(); })
     {
-        queue_ = std::make_unique<std::queue<OutputType>>();
-    }
-
-    template <class OtherOutputType>
-    TaskBlock(std::shared_ptr<TaskBlock<OtherOutputType, OutputType>> nextBlock,
-              transform_fn_type &&transform_fn,
-              std::shared_ptr<ThreadPool> pool = std::make_shared<ThreadPool>(1)) :
-        pool_(pool),
-        transform_fn_(std::forward<transform_fn_type>(transform_fn)),
-        fn_([this, nextBlock](InputTypes&&... values) mutable
-        {
-            this->on_function_enter();
-            OutputType val = std::move(this->transform_fn_(std::forward<InputTypes>(values)...));
-            nextBlock->post(std::move(val));
-            this->on_function_done();
-        }),
-        complete_fn_([this, nextBlock]()
-        {
-            nextBlock->complete();
-            this->signal_completion();
-        })
-    {
-        ++nextBlock->required_signal_num_;
-        size_t numParents = nextBlock->num_parents_++;
-        if(numParents == 0)
-            --nextBlock->required_signal_num_;
     }
 
 
@@ -129,6 +107,47 @@ public:
         std::lock_guard<std::mutex> lock(queue_mutex_);
 
         return queue_->size();
+    }
+
+    template <class OtherOutputType>
+    void add_output_block(std::shared_ptr<TaskBlock<OtherOutputType, OutputType>> nextBlock,
+                        predicate_fn_type &&predicate = [](const OutputType& val) { return true; })
+    {
+        ++nextBlock->required_signal_num_;
+        size_t numParents = nextBlock->num_parents_++;
+        if (numParents == 0)
+            --nextBlock->required_signal_num_;
+
+        child_blocks_.emplace_back(std::forward<predicate_fn_type>(predicate),
+                                  [nextBlock] { nextBlock->complete(); });
+
+        size_t numChildren = num_children_++;
+
+        if (numChildren == 0)
+        {
+            fn_ = [this, nextBlock](InputTypes&&... values)
+            {
+                this->on_function_enter();
+                OutputType val = this->transform_fn_(std::forward<InputTypes>(values)...);
+                for (auto &block : this->child_blocks_)
+                {
+                    auto &[pred, complete] = block;
+                    if (pred(val))
+                        nextBlock->post(std::move(val));
+                }
+                this->on_function_done();
+            };
+
+            complete_fn_ = [this]
+            {
+                for (auto &block : this->child_blocks_)
+                {
+                    auto &[pred, complete] = block;
+                    complete();
+                }
+                this->signal_completion();
+            };
+        }
     }
 
     void set_max_queued(size_t max_queued)
@@ -159,6 +178,9 @@ public:
         if (completion_signaled_num_ == required_signal_num_)
             throw std::exception();
 
+        if(num_children_ == 0 && !queue_)
+            queue_ = std::make_unique<std::queue<OutputType>>();
+
         ++num_queued_or_running_;
 
         std::unique_lock<std::mutex> lock(post_mutex_);
@@ -177,6 +199,9 @@ public:
     {
         if (completion_signaled_num_ == required_signal_num_)
             throw std::exception();
+
+        if(num_children_ == 0 && !queue_)
+            queue_ = std::make_unique<std::queue<OutputType>>();
 
         ++num_queued_or_running_;
 
