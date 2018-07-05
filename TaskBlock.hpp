@@ -22,7 +22,7 @@ private:
 	transform_fn_type transform_fn_;
 	internal_fn_type fn_;
 
-    std::vector<std::tuple<predicate_fn_type, std::function<void()>>> child_blocks_;
+    std::vector<std::tuple<predicate_fn_type, std::function<void(OutputType)>, std::function<void()>>> child_blocks_;
 
     std::function<void()> complete_fn_;
 
@@ -119,6 +119,7 @@ public:
             --nextBlock->required_signal_num_;
 
         child_blocks_.emplace_back(std::forward<predicate_fn_type>(predicate),
+                                  [nextBlock] (OutputType &&value) { nextBlock->post(std::forward<OutputType>(value)); },
                                   [nextBlock] { nextBlock->complete(); });
 
         size_t numChildren = num_children_++;
@@ -131,9 +132,12 @@ public:
                 OutputType val = this->transform_fn_(std::forward<InputTypes>(values)...);
                 for (auto &block : this->child_blocks_)
                 {
-                    auto &[pred, complete] = block;
+                    auto &[pred, post, complete] = block;
                     if (pred(val))
-                        nextBlock->post(std::move(val));
+                    {
+                        post(std::move(val));
+                        break;
+                    }
                 }
                 this->on_function_done();
             };
@@ -142,7 +146,7 @@ public:
             {
                 for (auto &block : this->child_blocks_)
                 {
-                    auto &[pred, complete] = block;
+                    auto &[pred, post, complete] = block;
                     complete();
                 }
                 this->signal_completion();
@@ -195,27 +199,27 @@ public:
 		pool_->post_no_future(fn_, std::forward<InputTypes>(data)...);
 	}
 
-    void post(const InputTypes&... data)
-    {
-        if (completion_signaled_num_ == required_signal_num_)
-            throw std::exception();
+    // void post(const InputTypes&... data)
+    // {
+    //     if (completion_signaled_num_ == required_signal_num_)
+    //         throw std::exception();
 
-        if(num_children_ == 0 && !queue_)
-            queue_ = std::make_unique<std::queue<OutputType>>();
+    //     if(num_children_ == 0 && !queue_)
+    //         queue_ = std::make_unique<std::queue<OutputType>>();
 
-        ++num_queued_or_running_;
+    //     ++num_queued_or_running_;
 
-        std::unique_lock<std::mutex> lock(post_mutex_);
+    //     std::unique_lock<std::mutex> lock(post_mutex_);
 
-        post_variable_.wait(lock, [this]{
-            size_t max_queued = this->max_queued_;
-            return max_queued == 0 || this->num_queued_ < max_queued;
-        });
+    //     post_variable_.wait(lock, [this]{
+    //         size_t max_queued = this->max_queued_;
+    //         return max_queued == 0 || this->num_queued_ < max_queued;
+    //     });
         
-        ++num_queued_;
+    //     ++num_queued_;
 
-        pool_->post_no_future(fn_, data...);
-    }
+    //     pool_->post_no_future(fn_, data...);
+    // }
 
     void complete()
     {
@@ -248,6 +252,14 @@ public:
 		queue_->pop();
 		return ret;
 	}
+
+    ~TaskBlock()
+    {
+        if (num_parents_ == 0 && completion_signaled_num_ != 1)
+            complete();
+
+        wait_for_completion();
+    }
 };
 
 template <class... InputTypes>
@@ -367,5 +379,13 @@ public:
 
         std::unique_lock<std::mutex> lock(completion_mutex_);
         completion_variable_.wait(lock, [this]() {return this->is_complete(); });
+    }
+
+    ~TaskBlock()
+    {
+        if (num_parents_ == 0 && completion_signaled_num_ != 1)
+            complete();
+
+        wait_for_completion();
     }
 };
