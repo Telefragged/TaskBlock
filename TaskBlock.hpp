@@ -205,27 +205,28 @@ public:
 		pool_->post_no_future(fn_, std::forward<InputTypes>(data)...);
 	}
 
-    // void post(const InputTypes&... data)
-    // {
-    //     if (completion_signaled_num_ == required_signal_num_)
-    //         throw std::exception();
+    template<class = std::enable_if_t<!(sizeof...(InputTypes) == 0), void>>
+    void post(const InputTypes&... data)
+    {
+        if (completion_signaled_num_ == required_signal_num_)
+            throw std::exception();
 
-    //     if(num_children_ == 0 && !queue_)
-    //         queue_ = std::make_unique<std::queue<OutputType>>();
+        if(num_children_ == 0 && !queue_)
+            queue_ = std::make_unique<std::queue<OutputType>>();
 
-    //     ++num_queued_or_running_;
+        ++num_queued_or_running_;
 
-    //     std::unique_lock<std::mutex> lock(post_mutex_);
+        std::unique_lock<std::mutex> lock(post_mutex_);
 
-    //     post_variable_.wait(lock, [this]{
-    //         size_t max_queued = this->max_queued_;
-    //         return max_queued == 0 || this->num_queued_ < max_queued;
-    //     });
+        post_variable_.wait(lock, [this]{
+            size_t max_queued = this->max_queued_;
+            return max_queued == 0 || this->num_queued_ < max_queued;
+        });
         
-    //     ++num_queued_;
+        ++num_queued_;
 
-    //     pool_->post_no_future(fn_, data...);
-    // }
+        pool_->post_no_future(fn_, data...);
+    }
 
     void complete()
     {
@@ -369,6 +370,26 @@ public:
         ++num_queued_;
 
         pool_->post_no_future(fn_, std::forward<InputTypes>(data)...);
+    }
+
+    template<class = std::enable_if_t<!(sizeof...(InputTypes) == 0), void>>
+    void post(const InputTypes&... data)
+    {
+        if (completion_signaled_num_ == required_signal_num_)
+            throw std::exception();
+
+        ++num_queued_or_running_;
+
+        std::unique_lock<std::mutex> lock(post_mutex_);
+
+        post_variable_.wait(lock, [this] {
+            size_t max_queued = this->max_queued_;
+            return max_queued == 0 || this->num_queued_ < max_queued;
+        });
+
+        ++num_queued_;
+
+        pool_->post_no_future(fn_, data...);
     }
 
     void complete()
