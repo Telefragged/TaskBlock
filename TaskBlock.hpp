@@ -45,6 +45,8 @@ private:
     std::atomic_size_t num_parents_ = 0;
     std::atomic_size_t num_children_ = 0;
 
+    bool is_exclusive_output_mode_ = true;
+
     bool decrement_and_check_completion()
     {
         --num_queued_or_running_;
@@ -109,6 +111,11 @@ public:
         return queue_->size();
     }
 
+    void set_exclusive_output_mode(bool newMode)
+    {
+        is_exclusive_output_mode_ = newMode;
+    }
+
     template <class OtherOutputType>
     void add_output_block(std::shared_ptr<TaskBlock<OtherOutputType, OutputType>> nextBlock,
                         predicate_fn_type &&predicate = [](const OutputType& val) { return true; })
@@ -119,7 +126,9 @@ public:
             --nextBlock->required_signal_num_;
 
         child_blocks_.emplace_back(std::forward<predicate_fn_type>(predicate),
-                                  [nextBlock] (OutputType &&value) { nextBlock->post(std::forward<OutputType>(value)); },
+                                  [nextBlock] (OutputType &&value) {
+            nextBlock->post(std::forward<OutputType>(value)); 
+        },
                                   [nextBlock] { nextBlock->complete(); });
 
         size_t numChildren = num_children_++;
@@ -135,8 +144,15 @@ public:
                     auto &[pred, post, complete] = block;
                     if (pred(val))
                     {
-                        post(std::move(val));
-                        break;
+                        if (this->is_exclusive_output_mode_ || this->child_blocks_.size() == 1)
+                        {
+                            post(std::move(val));
+                            break;
+                        }
+                        else
+                        {
+                            post(val);
+                        }
                     }
                 }
                 this->on_function_done();
@@ -165,16 +181,6 @@ public:
     {
         return std::shared_ptr<TaskBlock<OutputType, InputTypes...>>
             (new TaskBlock<OutputType, InputTypes...>(std::forward<transform_fn_type>(transform_fn), pool));
-    }
-
-    template <class OtherOutputType>
-    static std::shared_ptr<TaskBlock<OutputType, InputTypes...>>
-        create(std::shared_ptr<TaskBlock<OtherOutputType, OutputType>> nextBlock,
-               transform_fn_type &&transform_fn,
-               std::shared_ptr<ThreadPool> pool = std::make_shared<ThreadPool>(1))
-    {
-        return std::shared_ptr<TaskBlock<OutputType, InputTypes...>>
-            (new TaskBlock<OutputType, InputTypes...>(nextBlock, std::forward<transform_fn_type>(transform_fn), pool));
     }
 
 	void post(InputTypes&&... data)
