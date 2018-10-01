@@ -53,7 +53,7 @@ public:
 		using ReturnType = std::invoke_result_t<Fn, Args...>;
 
         if (working_ == false)
-            return;
+            throw std::exception();
 
 		auto promise = std::make_shared<std::promise<ReturnType>>();
 
