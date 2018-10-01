@@ -8,14 +8,13 @@
 #include <type_traits>
 #include <functional>
 
+#include "blockingconcurrentqueue.h"
+
 class ThreadPool
 {
 	std::vector<std::thread> workerThreads_;
-	std::queue<std::function<void()>> fnQueue_;
 
-    std::mutex fnQueue_mutex_;
-
-	std::condition_variable fnQueue_variable_;
+	moodycamel::BlockingConcurrentQueue<std::function<void()>> fnQueue_;
 
 	bool working_ = true;
 
@@ -26,16 +25,22 @@ class ThreadPool
 		while (true)
 		{
 			std::function<void()> fn;
-			{
-				std::unique_lock<std::mutex> lock(fnQueue_mutex_);
-				fnQueue_variable_.wait(lock, [this]() { return !this->working_ || !this->fnQueue_.empty(); });
 
-				if (!working_ && fnQueue_.empty())
-					return;
+			if (!working_ && fnQueue_.size_approx() == 0)
+				return;
 
-				fn = std::move(fnQueue_.front());
-				fnQueue_.pop();
-			}
+            bool got_value = false;
+
+            if (!fnQueue_.try_dequeue(fn))
+                while (working_ && !got_value)
+                    got_value = fnQueue_.wait_dequeue_timed(fn, std::chrono::milliseconds(10));
+
+            else
+                got_value = true;
+
+            if (!got_value)
+                return;
+
 			fn();
             --num_queued_or_running_;
 		}
@@ -47,39 +52,37 @@ public:
 	{
 		using ReturnType = std::invoke_result_t<Fn, Args...>;
 
-		auto promise = std::make_shared<std::promise<ReturnType>>();
-		{
-            std::lock_guard<std::mutex> lock(fnQueue_mutex_);
+        if (working_ == false)
+            return;
 
-			if constexpr (std::is_void_v<ReturnType>)
-			{
-                fnQueue_.emplace(
+		auto promise = std::make_shared<std::promise<ReturnType>>();
+
+		if constexpr (std::is_void_v<ReturnType>)
+		{
+            fnQueue_.enqueue(
+            [
+                promise,
+                func = std::forward<Fn>(fn),
+                args = std::make_tuple(std::forward<Args>(args)...)
+            ]() mutable
+            {
+                std::apply(func, std::move(args));
+                promise->set_value();
+            });
+		}
+		else
+		{
+
+            fnQueue_.enqueue(
                 [
                     promise,
                     func = std::forward<Fn>(fn),
                     args = std::make_tuple(std::forward<Args>(args)...)
                 ]() mutable
-                {
-                    std::apply(func, std::move(args));
-                    promise->set_value();
-                });
-			}
-			else
-			{
-
-                fnQueue_.emplace(
-                    [
-                        promise,
-                        func = std::forward<Fn>(fn),
-                        args = std::make_tuple(std::forward<Args>(args)...)
-                    ]() mutable
-                {
-                    promise->set_value(std::apply(func, std::move(args)));
-                });
-			}
+            {
+                promise->set_value(std::apply(func, std::move(args)));
+            });
 		}
-
-		fnQueue_variable_.notify_one();
 
         ++num_queued_or_running_;
 
@@ -89,18 +92,16 @@ public:
     template <class Fn, class... Args>
     void post_no_future(Fn &&fn, Args&&... args)
     {
+        if (working_ == false)
+            return;
+
+        fnQueue_.enqueue([func = std::forward<Fn>(fn),
+                            args = std::make_tuple(std::forward<Args>(args)...)]() mutable
         {
-            std::lock_guard<std::mutex> lock(fnQueue_mutex_);
+            std::apply(func, std::move(args));
+        });
 
-            fnQueue_.emplace([func = std::forward<Fn>(fn),
-                              args = std::make_tuple(std::forward<Args>(args)...)]() mutable
-            {
-                std::apply(func, std::move(args));
-            });
-        }
         ++num_queued_or_running_;
-
-        fnQueue_variable_.notify_one();
     }
 
 	ThreadPool(size_t numWorkers)
@@ -113,9 +114,7 @@ public:
 	{
 		working_ = false;
 
-		fnQueue_variable_.notify_all();
-
-		for (auto &worker : workerThreads_)
-			worker.join();
+        for (auto &worker : workerThreads_)
+            worker.join();
 	}
 };

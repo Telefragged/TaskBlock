@@ -16,6 +16,6 @@ endif()
 
 find_package(Threads REQUIRED)
 
-add_executable(TaskBlockExample main.cpp ThreadPoolQueue.hpp ThreadPool.hpp TaskBlock.hpp)
+add_executable(TaskBlockExample main.cpp ThreadPoolQueue.hpp ThreadPool.hpp TaskBlock.hpp concurrentqueue.h blockingconcurrentqueue.h)
 
 target_link_libraries(TaskBlockExample ${CMAKE_THREAD_LIBS_INIT})
