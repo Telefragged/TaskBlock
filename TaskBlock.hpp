@@ -350,7 +350,7 @@ public:
         if (!this->has_more_data() && is_complete())
             throw std::exception();
 
-        return queue_->try_dequeue(val)
+        return queue_->try_dequeue(val);
     }
 
     ~TaskBlock()
