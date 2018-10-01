@@ -13,7 +13,7 @@
 template <class OutputType>
 class ThreadPoolQueue
 {
-	std::atomic_size_t numQueuedOrReady_ = 0;
+    std::atomic_size_t numQueuedOrReady_ = 0;
 
     std::vector<std::thread> workerThreads_;
     std::queue<OutputType> outQueue_;
@@ -34,7 +34,7 @@ class ThreadPoolQueue
             std::function<OutputType()> fn;
             {
                 std::unique_lock<std::mutex> lock(fnQueue_mutex_);
-				fnQueue_variable_.wait(lock, [this](){ return !this->working_ || !this->fnQueue_.empty(); });
+                fnQueue_variable_.wait(lock, [this](){ return !this->working_ || !this->fnQueue_.empty(); });
 
                 if(!working_ && fnQueue_.empty())
                     return;
@@ -43,20 +43,20 @@ class ThreadPoolQueue
                 fnQueue_.pop();
             }
             auto result = fn();
-			{
-				std::lock_guard<std::mutex> lock(outQueue_mutex_);
-				outQueue_.emplace(std::move(result));
-			}
-			outQueue_variable_.notify_one();
+            {
+                std::lock_guard<std::mutex> lock(outQueue_mutex_);
+                outQueue_.emplace(std::move(result));
+            }
+            outQueue_variable_.notify_one();
         }
     }
 
 public:
 
-	bool has_more_data() const
-	{
-		return numQueuedOrReady_ > 0;
-	}
+    bool has_more_data() const
+    {
+        return numQueuedOrReady_ > 0;
+    }
 
     template <class Fn, class... Args>
     void post(Fn &&fn, Args&&... args)
@@ -66,42 +66,42 @@ public:
         {
             std::lock_guard<std::mutex> lock(fnQueue_mutex_);
 
-			fnQueue_.emplace(std::move(task));
+            fnQueue_.emplace(std::move(task));
         }
 
-		++numQueuedOrReady_;
+        ++numQueuedOrReady_;
 
         fnQueue_variable_.notify_one();
     }
 
-	void push(OutputType &&value)
-	{
-		{
-			std::lock_guard<std::mutex> lock(outQueue_mutex_);
-			outQueue_.emplace(std::forward<OutputType>(value));
-		}
+    void push(OutputType &&value)
+    {
+        {
+            std::lock_guard<std::mutex> lock(outQueue_mutex_);
+            outQueue_.emplace(std::forward<OutputType>(value));
+        }
 
-		++numQueuedOrReady_;
+        ++numQueuedOrReady_;
 
-		outQueue_variable_.notify_one();
-	}
+        outQueue_variable_.notify_one();
+    }
 
-	std::optional<OutputType> pop()
-	{
-		std::unique_lock<std::mutex> lock(outQueue_mutex_);
-		outQueue_variable_.wait(lock, [this] {return !this->working_ || !this->outQueue_.empty(); });
+    std::optional<OutputType> pop()
+    {
+        std::unique_lock<std::mutex> lock(outQueue_mutex_);
+        outQueue_variable_.wait(lock, [this] {return !this->working_ || !this->outQueue_.empty(); });
 
-		if (!this->working_ && this->outQueue_.empty())
-			return std::nullopt;
+        if (!this->working_ && this->outQueue_.empty())
+            return std::nullopt;
 
-		std::optional<OutputType> value(std::move(outQueue_.front()));
+        std::optional<OutputType> value(std::move(outQueue_.front()));
 
-		outQueue_.pop();
+        outQueue_.pop();
 
-		--numQueuedOrReady_;
+        --numQueuedOrReady_;
 
-		return value;
-	}
+        return value;
+    }
 
     ThreadPoolQueue(size_t numWorkers)
     {
@@ -120,6 +120,6 @@ public:
         for(auto &worker : workerThreads_)
             worker.join();
 
-		outQueue_variable_.notify_all();
+        outQueue_variable_.notify_all();
     }
 };

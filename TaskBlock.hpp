@@ -62,24 +62,24 @@ private:
     template <class OtherOutputType, class... OtherInputTypes>
     friend class TaskBlock;
 
-	using transform_fn_type = std::function<OutputType(InputTypes...)>;
-	using internal_fn_type = std::function<void(InputTypes...)>;
+    using transform_fn_type = std::function<OutputType(InputTypes...)>;
+    using internal_fn_type = std::function<void(InputTypes...)>;
     using predicate_fn_type = std::function<bool(OutputType&)>;
 
     using queue_tuple_t = decltype(get_uniqued_queue_tuple<InputTypes...>());
 
     queue_tuple_t input_queues_ = get_uniqued_queue_tuple<InputTypes...>();
 
-	std::shared_ptr<ThreadPool> pool_;
+    std::shared_ptr<ThreadPool> pool_;
 
-	transform_fn_type transform_fn_;
-	internal_fn_type fn_;
+    transform_fn_type transform_fn_;
+    internal_fn_type fn_;
 
     std::vector<std::tuple<predicate_fn_type, std::function<void(OutputType)>, std::function<void()>>> child_blocks_;
 
     std::function<void()> complete_fn_;
 
-	std::unique_ptr<moodycamel::BlockingConcurrentQueue<OutputType>> queue_;
+    std::unique_ptr<moodycamel::BlockingConcurrentQueue<OutputType>> queue_;
 
     std::mutex completion_mutex_;
 
@@ -275,8 +275,8 @@ public:
             post(std::move(get_from_queue<InputTypes>())...);
     }
 
-	void post(InputTypes&&... data)
-	{
+    void post(InputTypes&&... data)
+    {
         if (completion_signaled_num_ == required_signal_num_)
             throw std::exception();
 
@@ -285,8 +285,8 @@ public:
 
         ++num_queued_or_running_;
 
-		pool_->post_no_future(fn_, std::forward<InputTypes>(data)...);
-	}
+        pool_->post_no_future(fn_, std::forward<InputTypes>(data)...);
+    }
 
     std::enable_if_t<(sizeof...(InputTypes) != 0), void>
     post(const InputTypes&... data)
@@ -318,8 +318,8 @@ public:
         completion_variable_.wait(lock, [this]() {return this->is_complete(); });
     }
 
-	OutputType get()
-	{
+    OutputType get()
+    {
         if (queue_ == nullptr && num_children_ != 0)
             throw std::exception();
         else
@@ -339,8 +339,8 @@ public:
         if (!got_value)
             throw std::exception();
 
-		return ret;
-	}
+        return ret;
+    }
 
     bool try_get(OutputType &val)
     {

@@ -44,5 +44,5 @@ int main(int argc, char *argv[])
     block->post(std::chrono::high_resolution_clock::now());
     block->post(std::chrono::high_resolution_clock::now());
 
-	return 0;
+    return 0;
 }
